@@ -3,6 +3,187 @@ document.addEventListener("DOMContentLoaded", () => {
   const activitySelect = document.getElementById("activity");
   const signupForm = document.getElementById("signup-form");
   const messageDiv = document.getElementById("message");
+  
+  // Authentication elements
+  const userIcon = document.getElementById("user-icon");
+  const userDropdown = document.getElementById("user-dropdown");
+  const loginBtn = document.getElementById("login-btn");
+  const logoutBtn = document.getElementById("logout-btn");
+  const loginModal = document.getElementById("login-modal");
+  const loginForm = document.getElementById("login-form");
+  const closeModal = document.querySelector(".close");
+  const loggedOutMenu = document.getElementById("logged-out-menu");
+  const loggedInMenu = document.getElementById("logged-in-menu");
+  const usernameDisplay = document.getElementById("username-display");
+  const loginMessage = document.getElementById("login-message");
+  const signupContainer = document.getElementById("signup-container");
+  
+  // Session storage for auth token
+  let authToken = localStorage.getItem("authToken");
+  let isAuthenticated = false;
+
+  // Check authentication status on load
+  async function checkAuthStatus() {
+    if (!authToken) {
+      updateUIForGuest();
+      return;
+    }
+    
+    try {
+      const response = await fetch("/auth/status", {
+        headers: {
+          "Authorization": `Bearer ${authToken}`
+        }
+      });
+      
+      const data = await response.json();
+      
+      if (data.authenticated) {
+        isAuthenticated = true;
+        usernameDisplay.textContent = `Logged in as: ${data.username}`;
+        updateUIForTeacher();
+      } else {
+        localStorage.removeItem("authToken");
+        authToken = null;
+        updateUIForGuest();
+      }
+    } catch (error) {
+      console.error("Error checking auth status:", error);
+      updateUIForGuest();
+    }
+  }
+  
+  // Update UI for guest (student) view
+  function updateUIForGuest() {
+    isAuthenticated = false;
+    loggedOutMenu.classList.remove("hidden");
+    loggedInMenu.classList.add("hidden");
+    if (signupContainer) {
+      signupContainer.style.display = "block"; // Show signup form for everyone
+    }
+  }
+  
+  // Update UI for authenticated teacher
+  function updateUIForTeacher() {
+    loggedOutMenu.classList.add("hidden");
+    loggedInMenu.classList.remove("hidden");
+    if (signupContainer) {
+      signupContainer.style.display = "block"; // Show signup form for teachers
+    }
+  }
+  
+  // Toggle user dropdown
+  userIcon.addEventListener("click", (e) => {
+    e.stopPropagation();
+    userDropdown.classList.toggle("hidden");
+  });
+  
+  // Close dropdown when clicking outside
+  document.addEventListener("click", () => {
+    userDropdown.classList.add("hidden");
+  });
+  
+  // Open login modal
+  loginBtn.addEventListener("click", () => {
+    loginModal.classList.remove("hidden");
+    userDropdown.classList.add("hidden");
+  });
+  
+  // Close login modal
+  closeModal.addEventListener("click", () => {
+    loginModal.classList.add("hidden");
+    loginForm.reset();
+    loginMessage.classList.add("hidden");
+  });
+  
+  // Close modal when clicking outside
+  window.addEventListener("click", (e) => {
+    if (e.target === loginModal) {
+      loginModal.classList.add("hidden");
+      loginForm.reset();
+      loginMessage.classList.add("hidden");
+    }
+  });
+  
+  // Handle login
+  loginForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    
+    const username = document.getElementById("username").value;
+    const password = document.getElementById("password").value;
+    
+    try {
+      const response = await fetch(
+        `/auth/login?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`,
+        {
+          method: "POST"
+        }
+      );
+      
+      const data = await response.json();
+      
+      if (response.ok) {
+        authToken = data.token;
+        localStorage.setItem("authToken", authToken);
+        isAuthenticated = true;
+        usernameDisplay.textContent = `Logged in as: ${data.username}`;
+        updateUIForTeacher();
+        loginModal.classList.add("hidden");
+        loginForm.reset();
+        loginMessage.classList.add("hidden");
+        
+        // Refresh activities to show delete buttons
+        fetchActivities();
+        
+        // Show success message
+        messageDiv.textContent = "Successfully logged in!";
+        messageDiv.className = "success";
+        messageDiv.classList.remove("hidden");
+        setTimeout(() => {
+          messageDiv.classList.add("hidden");
+        }, 3000);
+      } else {
+        loginMessage.textContent = data.detail || "Login failed";
+        loginMessage.className = "error";
+        loginMessage.classList.remove("hidden");
+      }
+    } catch (error) {
+      loginMessage.textContent = "Login failed. Please try again.";
+      loginMessage.className = "error";
+      loginMessage.classList.remove("hidden");
+      console.error("Error logging in:", error);
+    }
+  });
+  
+  // Handle logout
+  logoutBtn.addEventListener("click", async () => {
+    try {
+      await fetch("/auth/logout", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${authToken}`
+        }
+      });
+    } catch (error) {
+      console.error("Error logging out:", error);
+    }
+    
+    localStorage.removeItem("authToken");
+    authToken = null;
+    updateUIForGuest();
+    userDropdown.classList.add("hidden");
+    
+    // Refresh activities to hide delete buttons
+    fetchActivities();
+    
+    // Show success message
+    messageDiv.textContent = "Successfully logged out!";
+    messageDiv.className = "success";
+    messageDiv.classList.remove("hidden");
+    setTimeout(() => {
+      messageDiv.classList.add("hidden");
+    }, 3000);
+  });
 
   // Function to fetch activities from API
   async function fetchActivities() {
@@ -56,9 +237,14 @@ document.addEventListener("DOMContentLoaded", () => {
         activitySelect.appendChild(option);
       });
 
-      // Add event listeners to delete buttons
+      // Add event listeners to delete buttons (only show for authenticated users)
       document.querySelectorAll(".delete-btn").forEach((button) => {
-        button.addEventListener("click", handleUnregister);
+        if (isAuthenticated) {
+          button.style.display = "inline";
+          button.addEventListener("click", handleUnregister);
+        } else {
+          button.style.display = "none";
+        }
       });
     } catch (error) {
       activitiesList.innerHTML =
@@ -72,6 +258,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const button = event.target;
     const activity = button.getAttribute("data-activity");
     const email = button.getAttribute("data-email");
+    
+    if (!authToken) {
+      messageDiv.textContent = "You must be logged in to unregister students.";
+      messageDiv.className = "error";
+      messageDiv.classList.remove("hidden");
+      return;
+    }
 
     try {
       const response = await fetch(
@@ -80,6 +273,9 @@ document.addEventListener("DOMContentLoaded", () => {
         )}/unregister?email=${encodeURIComponent(email)}`,
         {
           method: "DELETE",
+          headers: {
+            "Authorization": `Bearer ${authToken}`
+          }
         }
       );
 
@@ -118,12 +314,18 @@ document.addEventListener("DOMContentLoaded", () => {
     const activity = document.getElementById("activity").value;
 
     try {
+      const headers = {};
+      if (authToken) {
+        headers["Authorization"] = `Bearer ${authToken}`;
+      }
+      
       const response = await fetch(
         `/activities/${encodeURIComponent(
           activity
         )}/signup?email=${encodeURIComponent(email)}`,
         {
           method: "POST",
+          headers: headers
         }
       );
 
@@ -156,5 +358,6 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Initialize app
+  checkAuthStatus();
   fetchActivities();
 });
